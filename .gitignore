@@ -1,0 +1,21 @@
+# dependencies & build output
+node_modules/
+dist/
+
+# os / editor
+.DS_Store
+.trae/
+.tfds/
+
+# internal materials — do not publish to public repo
+*.py
+requirements.txt
+kit_generate_punish_record_request.json
+puppeteer-config.json
+*.mmd
+*.png
+*.svg
+*.md
+lobster.html
+*-preview.html
+ticko-*.html

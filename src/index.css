@@ -1,0 +1,4 @@
+@import "tailwindcss";
+@import "@tfdesign/b-end/theme.css";
+@source "./**/*.{js,jsx,ts,tsx}";
+@source "../node_modules/@tfdesign/b-end/**/*.{js,jsx}";
