@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>执行数据 · 工单分流看板（TF_Base）</title>
+<style>
+  :root{
+    /* TF_Base tokens */
+    --page-fill:#F2F4F7; --surface:#FFFFFF; --glass:rgba(255,255,255,0.65);
+    --fill:#F9FAFB;
+    --foreground:#182230; --secondary:#475467; --muted:#667085; --disabled:#98A2B3;
+    --brand:#56D3BC; --brand-deep:#18B49D; --brand-tint:#EAFAF6;
+    --border:#E4E7EC; --border-strong:#D0D5DD;
+    --success:#3EB346; --warning:#FA8B14; --danger:#F74331;
+    --radius-md:8px; --radius-lg:12px; --radius-card:20px; --radius-full:9999px;
+    --sh-card:0 30px 50px 0 rgba(0,9,36,0.05);
+    /* 架构主色（图表语境） */
+    --ma:#4E5BA6; --ma-tint:#EEF0FA;
+    --as:#18B49D; --as-tint:#E6F7F3;
+    /* 阶段/技能分类色（克制的冷色系） */
+    --c1:#4E5BA6; --c2:#2E90FA; --c3:#18B49D; --c4:#F79009; --c5:#9E77ED; --c6:#EE46BC;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--page-fill);color:var(--foreground);
+    font-family:Inter,system-ui,"PingFang SC","Microsoft YaHei",sans-serif;
+    line-height:1.5;padding:24px;font-size:14px;
+  }
+  .wrap{max-width:1360px;margin:0 auto;}
+
+  /* header：不加卡片、不加分割线 */
+  header{padding:8px 4px 20px;}
+  .kicker{color:var(--brand-deep);font-size:12px;font-weight:600;letter-spacing:.5px;}
+  h1{font-size:18px;font-weight:600;margin:6px 0 4px;color:var(--foreground);}
+  .meta{color:var(--muted);font-size:12px;}
+
+  /* cards */
+  .card{background:var(--glass);border:1px solid var(--surface);border-radius:var(--radius-card);
+    padding:20px;margin-bottom:16px;box-shadow:0 1px 2px rgba(16,24,40,.03);}
+  .card > h2{font-size:16px;font-weight:600;margin-bottom:4px;display:flex;align-items:center;gap:8px;}
+  .card .hint{color:var(--muted);font-size:12px;margin-bottom:16px;}
+  .dot{width:8px;height:8px;border-radius:var(--radius-full);display:inline-block;background:var(--brand);}
+
+  /* ---------- 分流总览（左→右 sankey） ---------- */
+  .sankey{margin:4px 0 6px;}
+  .sankey svg{width:100%;height:auto;display:block;}
+  .split-legend{display:flex;gap:24px;margin-top:8px;flex-wrap:wrap;}
+  .legend-item{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--secondary);}
+  .legend-item .sq{width:10px;height:10px;border-radius:3px;flex:none;}
+  .legend-item b{color:var(--foreground);font-weight:600;}
+  .legend-item .lp{color:var(--muted);}
+
+  /* ---------- 下钻：共享 tab + 左右双列 ---------- */
+  .tabs{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:18px;flex-wrap:wrap;}
+  .tabs button{border:0;background:transparent;color:var(--muted);font-size:14px;font-weight:500;
+    padding:8px 2px;margin-right:24px;cursor:pointer;position:relative;font-family:inherit;}
+  .tabs button:hover{color:var(--secondary);}
+  .tabs button.on{color:var(--foreground);}
+  .tabs button.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--brand);border-radius:2px;}
+
+  /* 维度说明：tab 下单条，取代两侧重复 callout */
+  .dim-note{background:var(--fill);border:1px solid var(--border);border-radius:var(--radius-md);
+    padding:10px 14px;font-size:12px;color:var(--secondary);margin-bottom:22px;line-height:1.6;}
+  .dim-note b{color:var(--brand-deep);font-weight:600;}
+
+  /* 桑基节点可点击 + 筛选提示 */
+  .sankey .arch-node{cursor:pointer;transition:opacity .25s;}
+  .sankey .arch-node:hover{opacity:.9;}
+  .filter-tip{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--secondary);margin-bottom:16px;flex-wrap:wrap;}
+  .filter-tip .ftag{display:inline-flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-full);padding:3px 10px;font-weight:600;color:var(--foreground);}
+  .filter-tip .ftag .sq{width:8px;height:8px;border-radius:2px;flex:none;}
+  .reset-arch{border:1px solid var(--border);background:var(--surface);color:var(--foreground);font-size:12px;font-weight:500;padding:3px 12px;border-radius:var(--radius-full);cursor:pointer;font-family:inherit;}
+  .reset-arch:hover{background:var(--fill);border-color:var(--border-strong);}
+
+  .cols{display:grid;grid-template-columns:1fr 1fr;column-gap:40px;}
+  .col{min-width:0;position:relative;}
+  .col:first-child::after{content:"";position:absolute;top:2px;bottom:0;right:-20px;width:1px;background:var(--border);}
+  .cols.single{grid-template-columns:1fr;}
+  .cols.single .col::after{display:none;}
+  .col.full .units{grid-template-columns:repeat(4,1fr);}
+  @media(max-width:1080px){
+    .cols{grid-template-columns:1fr;row-gap:26px;}
+    .col:first-child::after{display:none;}
+    .cols:not(.single) .col:first-child{border-bottom:1px solid var(--border);padding-bottom:26px;}
+  }
+  @media(max-width:720px){.col.full .units{grid-template-columns:repeat(2,1fr);}}
+  .col-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .col-head .an{font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px;}
+  .col-head .an .sq{width:10px;height:10px;border-radius:3px;flex:none;}
+  .badge{font-size:12px;font-weight:600;padding:2px 10px;border-radius:var(--radius-full);}
+  .badge.ma{background:var(--ma-tint);color:var(--ma);}
+  .badge.as{background:var(--as-tint);color:var(--brand-deep);}
+  .col-sub{font-size:12px;color:var(--muted);margin:7px 0 16px;}
+  .col-body{}
+
+  /* cumulative units */
+  .units{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;}
+  @media(max-width:520px){.units{grid-template-columns:1fr}}
+  .unit{border:1px solid var(--border);border-top:3px solid var(--c1);border-radius:var(--radius-md);background:var(--surface);overflow:hidden;}
+  .unit .uh{padding:10px 14px 8px;font-weight:600;font-size:14px;display:flex;align-items:center;gap:7px;border-bottom:1px solid var(--border);}
+  .unit .uh .ud{width:8px;height:8px;border-radius:var(--radius-full);flex:none;}
+  .unit .ub{padding:6px 14px 10px;}
+  .metric{padding:8px 0;border-bottom:1px solid var(--fill);}
+  .metric:last-child{border-bottom:0;}
+  .metric .ml{font-size:12px;color:var(--muted);}
+  .metric .mv{font-size:18px;font-weight:600;letter-spacing:-.2px;margin-top:1px;color:var(--foreground);}
+  .metric .md{font-size:12px;font-weight:500;margin-top:1px;}
+  .up{color:var(--success);} .down{color:var(--danger);} .flat{color:var(--muted);}
+
+  /* funnel */
+  .funnel{display:flex;flex-direction:column;gap:8px;}
+  .frow{display:grid;grid-template-columns:56px 1fr 92px;align-items:center;gap:10px;}
+  .frow .fn{font-size:13px;font-weight:500;color:var(--secondary);text-align:right;}
+  .frow .ft{height:34px;border-radius:var(--radius-md);background:var(--fill);overflow:hidden;border:1px solid var(--border);}
+  .frow .ff{height:100%;display:flex;align-items:center;padding-left:12px;color:#fff;font-weight:600;font-size:14px;transition:width .5s cubic-bezier(.4,0,.2,1);}
+  .frow .fv{font-size:14px;font-weight:600;text-align:left;}
+  .frow .fv small{display:block;font-size:11px;color:var(--muted);font-weight:400;}
+  .farrow{text-align:center;color:var(--disabled);font-size:11px;margin:-2px 0;}
+
+  /* distribution */
+  .dist{display:flex;flex-direction:column;gap:9px;}
+  .disrow{display:grid;grid-template-columns:80px 1fr 108px;align-items:center;gap:10px;}
+  .disrow .dn{font-size:13px;font-weight:500;color:var(--secondary);text-align:right;}
+  .disrow .dt{height:22px;border-radius:var(--radius-md);background:var(--fill);overflow:hidden;border:1px solid var(--border);}
+  .disrow .df{height:100%;transition:width .5s cubic-bezier(.4,0,.2,1);}
+  .disrow .dv{font-size:13px;font-weight:600;text-align:left;}
+  .disrow .dv small{color:var(--muted);font-weight:400;margin-left:5px;}
+
+  /* dense table on white surface */
+  .tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface);}
+  .tbl{border-collapse:separate;border-spacing:0;width:100%;min-width:560px;}
+  .tbl th,.tbl td{padding:10px 14px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--border);}
+  .tbl tbody tr:last-child td{border-bottom:0;}
+  .tbl thead th{position:sticky;top:0;background:var(--fill);color:var(--secondary);font-weight:600;font-size:12px;z-index:2;}
+  .tbl th.sticky,.tbl td.sticky{position:sticky;left:0;text-align:left;background:var(--surface);z-index:1;box-shadow:1px 0 0 var(--border);}
+  .tbl thead th.sticky{z-index:3;background:var(--fill);}
+  .tbl tbody tr:hover td{background:var(--fill);}
+  .rowhead{font-weight:600;color:var(--foreground);font-size:14px;}
+  .cv{font-weight:600;color:var(--foreground);font-size:14px;}
+  .cd{font-size:12px;margin-top:1px;font-weight:500;}
+  .tag{display:inline-block;background:var(--fill);border:1px solid var(--border);border-radius:var(--radius-full);padding:1px 9px;font-size:12px;color:var(--secondary);font-weight:500;}
+
+  /* callout：中性浅底 */
+  .callout{background:var(--fill);border:1px solid var(--border);border-radius:var(--radius-md);
+    padding:10px 14px;font-size:12px;color:var(--secondary);margin-top:14px;}
+  .callout b{color:var(--brand-deep);font-weight:600;}
+
+  footer{color:var(--muted);font-size:12px;text-align:center;margin-top:20px;line-height:1.7;padding:0 4px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="kicker">DATA MONITOR · 执行数据</div>
+    <h1>工单分流看板</h1>
+    <div class="meta">工单总量先分流到两种执行架构，再选维度左右并排下钻执行数据 / 工单标签 / 执行单元明细 ｜ 周期 2026-06 ｜ 示意脱敏数据</div>
+  </header>
+
+  <div class="card">
+    <h2><span class="dot"></span>工单分流总览</h2>
+    <div class="hint">全部工单从左侧汇入，按任务类型分流到两种执行架构（下方并排下钻）。</div>
+    <div class="sankey" id="sankey"></div>
+    <div class="split-legend" id="splitLegend"></div>
+  </div>
+
+  <div id="detail"></div>
+
+  <footer>
+    统一「执行单元」数据模型：多智能体的执行单元=阶段（有序流水线），Agent+Skill 的执行单元=技能（按需调用）。<br>
+    同一维度下左右并排对比：通用指标两架构同口径复用；阶段专属项（停留漏斗、阶段量列、Subagent）在技能侧替换为对应技能表达。
+  </footer>
+</div>
+
+<script>
+/* ================= 分流总览 ================= */
+const OVERVIEW = {
+  totalLabel:"2.94万", period:"2026-06",
+  branches:[
+    {key:"multiagent",name:"多智能体架构",desc:"Planner + 有序 Subagent（阶段流水线）",label:"2.00万",pct:68,cls:"ma",color:"#4E5BA6",rib:"rgba(78,91,166,0.30)"},
+    {key:"agent_skill",name:"Agent + Skill 架构",desc:"Planner + 按需技能（无固定阶段）",label:"9,400",pct:32,cls:"as",color:"#18B49D",rib:"rgba(24,180,157,0.32)"},
+  ]
+};
+
+/* 共享下钻维度 */
+const DIMS=[
+  {id:"cumulative",label:"累计数"},
+  {id:"flow",label:"停留 · 分布"},
+  {id:"label",label:"工单标签分析"},
+  {id:"unit",label:"执行单元分析"},
+];
+
+/* ================= 下钻数据 ================= */
+const DATA = {
+  multiagent:{
+    subtitles:{
+      cumulative:"阶段累计数 · 各阶段执行/介入/异常",
+      flow:"阶段停留数 · 有序漏斗",
+      label:"工单标签分析 · 含阶段量列",
+      unit:"智能体分析 · 各阶段 Subagent",
+    },
+    callouts:{
+      cumulative:"累计数指标（执行/介入/异常次数与率）与架构无关，两侧口径一致、可直接对比。",
+      flow:"「停留数」= 当前卡在各阶段的工单量，是<b>有序漏斗</b>：上一环产出流入下一环，用于定位堵点。",
+      label:"保留 <b>首次规划量 / 研判量 / 执行量 / 沟通量 / 覆盖率</b> 等阶段列，逐标签看各阶段流量。",
+      unit:"执行主体 = 各阶段 Subagent，逐 Agent 看处理量 / 成功率 / 耗时 / Token。",
+    },
+    cumulativeUnits:[
+      {name:"规划",color:"var(--c1)",metrics:[
+        {l:"执行次数 · 日均",v:"1.35万",d:"3.6%",t:"up"},
+        {l:"人工介入次数",v:"1",d:"91.73%",t:"down"},
+        {l:"人工介入率",v:"0.01%",d:"0.06pp",t:"down"},
+        {l:"异常次数",v:"1",d:"91.73%",t:"down"},
+        {l:"异常率",v:"0.01%",d:"0.06pp",t:"down"}]},
+      {name:"研判",color:"var(--c2)",metrics:[
+        {l:"经过研判个数 · 日均",v:"1.35万",d:"3.54%",t:"up"},
+        {l:"人工介入次数",v:"3,616",d:"13.28%",t:"up"},
+        {l:"人工介入率",v:"26.87%",d:"3.02pp",t:"up"},
+        {l:"异常次数",v:"44",d:"53.27%",t:"down"},
+        {l:"异常率",v:"0.33%",d:"0.35pp",t:"down"}]},
+      {name:"执行",color:"var(--c3)",metrics:[
+        {l:"经过执行个数 · 日均",v:"1.33万",d:"3.18%",t:"up"},
+        {l:"人工介入次数",v:"838",d:"65.68%",t:"down"},
+        {l:"人工介入率",v:"6.31%",d:"2.62pp",t:"down"},
+        {l:"异常次数",v:"808",d:"78.74%",t:"up"},
+        {l:"异常率",v:"6.08%",d:"2.79pp",t:"up"}]},
+      {name:"沟通",color:"var(--c4)",metrics:[
+        {l:"经过沟通个数 · 日均",v:"2,081",d:"3.66%",t:"up"},
+        {l:"参评率",v:"15.86%",d:"0.81pp",t:"up"},
+        {l:"工单解决率",v:"17.35%",d:"0.69pp",t:"up"},
+        {l:"工单满意度",v:"19.12%",d:"1.22pp",t:"up"},
+        {l:"异常次数",v:"18",d:"60.7%",t:"up"}]},
+    ],
+    dist:[
+      {name:"规划",color:"var(--c1)",value:316,label:"316"},
+      {name:"研判",color:"var(--c2)",value:10200,label:"1.02万"},
+      {name:"执行",color:"var(--c3)",value:13200,label:"1.32万"},
+      {name:"沟通",color:"var(--c4)",value:5266,label:"5,266"},
+    ],
+    tables:{
+      label:{
+        columns:["工单标签","首次规划量","研判量","执行量","沟通量","首次规划覆盖率","人工介入率","工单解决率","完结时长(h)"],
+        rows:[
+          ["审核与处罚",{v:"1.20万",d:"3.16%",t:"down"},{v:"1.20万",d:"3.1%",t:"down"},{v:"1.20万",d:"3.04%",t:"down"},{v:"2,038",d:"7.98%",t:"up"},{v:"93.66%",d:"3.83pp",t:"up"},{v:"32.69%",d:"0.03pp",t:"down"},{v:"16%",d:"0.5pp",t:"up"},{v:"3.67",d:"43.1%",t:"down"}],
+          ["内容分发",{v:"1,122",d:"1.85%",t:"down"},{v:"1,122",d:"1.81%",t:"down"},{v:"1,120",d:"1.67%",t:"down"},{v:"31",d:"68.49%",t:"down"},{v:"86.51%",d:"2.49pp",t:"up"},{v:"36.75%",d:"8.97pp",t:"down"},{v:"29.28%",d:"0.01pp",t:"down"},{v:"5.04",d:"40.78%",t:"down"}],
+          ["账号",{v:"252",d:"26.13%",t:"down"},{v:"252",d:"26.11%",t:"down"},{v:"103",d:"28.44%",t:"down"},{v:"11",d:"46.74%",t:"down"},{v:"8.34%",d:"1.92pp",t:"down"},{v:"91.17%",d:"1.81pp",t:"down"},{v:"27.64%",d:"6.09pp",t:"up"},{v:"27.3",d:"22.04%",t:"down"}],
+          ["权益保护",{v:"13",d:"4.62%",t:"up"},{v:"13",d:"4.65%",t:"up"},{v:"13",d:"5.26%",t:"up"},{v:"0",d:"0%",t:"flat"},{v:"8.87%",d:"1.02pp",t:"up"},{v:"92.18%",d:"2.96pp",t:"up"},{v:"36.36%",d:"9.09pp",t:"up"},{v:"6.17",d:"44.71%",t:"down"}],
+        ],
+      },
+      agent:{
+        columns:["智能体","处理量","成功率","人工介入率","异常率","平均耗时(s)","Token消耗·日均"],
+        rows:[
+          ["规划 Agent",{v:"1.35万",d:"3.6%",t:"up"},{v:"99.9%",d:"0.1pp",t:"up"},{v:"0.01%",d:"0.06pp",t:"down"},{v:"0.01%",d:"0.06pp",t:"down"},{v:"1.2",d:"5%",t:"down"},{v:"82万",d:"4%",t:"up"}],
+          ["研判 Agent",{v:"1.35万",d:"3.54%",t:"up"},{v:"96.7%",d:"0.4pp",t:"down"},{v:"26.87%",d:"3.02pp",t:"up"},{v:"0.33%",d:"0.35pp",t:"down"},{v:"3.8",d:"7%",t:"up"},{v:"210万",d:"6%",t:"up"}],
+          ["执行 Agent",{v:"1.33万",d:"3.18%",t:"up"},{v:"93.9%",d:"0.6pp",t:"down"},{v:"6.31%",d:"2.62pp",t:"down"},{v:"6.08%",d:"2.79pp",t:"up"},{v:"5.6",d:"9%",t:"up"},{v:"176万",d:"5%",t:"up"}],
+          ["沟通 Agent",{v:"2,081",d:"3.66%",t:"up"},{v:"98.1%",d:"0.3pp",t:"up"},{v:"0.01%",d:"0pp",t:"flat"},{v:"0.88%",d:"1.45pp",t:"up"},{v:"2.1",d:"3%",t:"down"},{v:"48万",d:"2%",t:"up"}],
+        ],
+      },
+    },
+  },
+
+  agent_skill:{
+    subtitles:{
+      cumulative:"技能累计数 · 各技能执行/介入/异常",
+      flow:"技能调用分布 · 占比",
+      label:"工单标签分析 · 阶段列已收敛",
+      unit:"技能分析 · 各 Skill",
+    },
+    callouts:{
+      cumulative:"累计数指标与多智能体侧口径完全一致：卡片数量随技能动态变化，指标复用。",
+      flow:"无流水线顺序，「停留数」漏斗失去语义 → 替换为 <b>技能调用分布</b>：看各技能调用量级与占比，定位重度依赖与长尾。",
+      label:"无阶段列 → 4 个阶段量列收敛为 <b>调用总量 + 涉及技能数 + Top技能</b>，其余通用指标保持一致。",
+      unit:"执行主体从 Subagent 换成 <b>Skill</b>，行数随任务动态；指标口径与多智能体侧对齐，可横向对比。",
+    },
+    cumulativeUnits:[
+      {name:"流量诊断",color:"var(--c1)",metrics:[
+        {l:"调用次数 · 日均",v:"8,420",d:"6.2%",t:"up"},
+        {l:"人工介入次数",v:"512",d:"8.1%",t:"down"},
+        {l:"人工介入率",v:"6.08%",d:"1.1pp",t:"down"},
+        {l:"异常次数",v:"73",d:"12.4%",t:"up"},
+        {l:"异常率",v:"0.87%",d:"0.2pp",t:"up"}]},
+      {name:"审核催审",color:"var(--c2)",metrics:[
+        {l:"调用次数 · 日均",v:"5,110",d:"4.4%",t:"up"},
+        {l:"人工介入次数",v:"96",d:"3.2%",t:"down"},
+        {l:"人工介入率",v:"1.88%",d:"0.3pp",t:"down"},
+        {l:"异常次数",v:"21",d:"5.0%",t:"down"},
+        {l:"异常率",v:"0.41%",d:"0.1pp",t:"down"}]},
+      {name:"处罚申诉",color:"var(--c3)",metrics:[
+        {l:"调用次数 · 日均",v:"3,240",d:"2.1%",t:"up"},
+        {l:"人工介入次数",v:"470",d:"9.6%",t:"up"},
+        {l:"人工介入率",v:"14.5%",d:"2.4pp",t:"up"},
+        {l:"异常次数",v:"58",d:"7.7%",t:"up"},
+        {l:"异常率",v:"1.79%",d:"0.4pp",t:"up"}]},
+      {name:"违规预警",color:"var(--c4)",metrics:[
+        {l:"调用次数 · 日均",v:"1,180",d:"1.3%",t:"down"},
+        {l:"人工介入次数",v:"34",d:"4.1%",t:"down"},
+        {l:"人工介入率",v:"2.88%",d:"0.2pp",t:"down"},
+        {l:"异常次数",v:"9",d:"3.0%",t:"down"},
+        {l:"异常率",v:"0.76%",d:"0.1pp",t:"down"}]},
+    ],
+    dist:[
+      {name:"流量诊断",color:"var(--c1)",value:8420,label:"8,420",pct:"45.0%"},
+      {name:"审核催审",color:"var(--c2)",value:5110,label:"5,110",pct:"27.3%"},
+      {name:"处罚申诉",color:"var(--c3)",value:3240,label:"3,240",pct:"17.3%"},
+      {name:"违规预警",color:"var(--c4)",value:1180,label:"1,180",pct:"6.3%"},
+      {name:"月度报告",color:"var(--c5)",value:520,label:"520",pct:"2.8%"},
+      {name:"博主对标",color:"var(--c6)",value:250,label:"250",pct:"1.3%"},
+    ],
+    tables:{
+      label:{
+        columns:["工单标签","调用总量","涉及技能数","Top技能","人工介入率","工单解决率","工单满意度","完结时长(h)"],
+        rows:[
+          ["审核与处罚",{v:"1.24万",d:"4.1%",t:"up"},{v:"5",plain:true},{v:"审核催审",tag:true},{v:"4.2%",d:"0.8pp",t:"down"},{v:"88.5%",d:"2.1pp",t:"up"},{v:"86.2%",d:"1.4pp",t:"up"},{v:"2.3",d:"12%",t:"down"}],
+          ["内容分发",{v:"3,210",d:"2.3%",t:"up"},{v:"4",plain:true},{v:"流量诊断",tag:true},{v:"6.1%",d:"1.2pp",t:"down"},{v:"82.3%",d:"3.4pp",t:"up"},{v:"80.1%",d:"2.0pp",t:"up"},{v:"3.1",d:"8%",t:"down"}],
+          ["账号",{v:"980",d:"5.6%",t:"down"},{v:"3",plain:true},{v:"处罚申诉",tag:true},{v:"12.4%",d:"2.2pp",t:"up"},{v:"76.1%",d:"1.1pp",t:"down"},{v:"74.8%",d:"0.9pp",t:"down"},{v:"4.5",d:"6%",t:"up"}],
+          ["权益保护",{v:"460",d:"8.2%",t:"up"},{v:"2",plain:true},{v:"违规预警",tag:true},{v:"3.0%",d:"0.5pp",t:"down"},{v:"90.2%",d:"1.8pp",t:"up"},{v:"88.9%",d:"1.1pp",t:"up"},{v:"1.9",d:"15%",t:"down"}],
+        ],
+      },
+      agent:{
+        columns:["技能","调用量","成功率","人工介入率","异常率","平均耗时(s)","Token消耗·日均"],
+        rows:[
+          ["流量诊断",{v:"8,420",d:"6.2%",t:"up"},{v:"94.5%",d:"1.1pp",t:"up"},{v:"6.08%",d:"1.1pp",t:"down"},{v:"0.87%",d:"0.2pp",t:"up"},{v:"4.2",d:"3%",t:"up"},{v:"96万",d:"5%",t:"up"}],
+          ["审核催审",{v:"5,110",d:"4.4%",t:"up"},{v:"98.2%",d:"0.5pp",t:"up"},{v:"1.88%",d:"0.3pp",t:"down"},{v:"0.41%",d:"0.1pp",t:"down"},{v:"1.8",d:"4%",t:"down"},{v:"42万",d:"2%",t:"up"}],
+          ["处罚申诉",{v:"3,240",d:"2.1%",t:"up"},{v:"91.7%",d:"0.8pp",t:"down"},{v:"14.5%",d:"2.4pp",t:"up"},{v:"1.79%",d:"0.4pp",t:"up"},{v:"6.1",d:"8%",t:"up"},{v:"120万",d:"7%",t:"up"}],
+          ["违规预警",{v:"1,180",d:"1.3%",t:"down"},{v:"96.9%",d:"0.2pp",t:"up"},{v:"2.88%",d:"0.2pp",t:"down"},{v:"0.76%",d:"0.1pp",t:"down"},{v:"2.4",d:"2%",t:"down"},{v:"30万",d:"1%",t:"down"}],
+        ],
+      },
+    },
+  },
+};
+
+/* ================= 渲染 ================= */
+let activeDim="cumulative";
+let archFilter=null; /* null=看全部；'multiagent' / 'agent_skill'=只看该架构 */
+const icon=t=>t==="up"?"↑":t==="down"?"↓":"–";
+
+function renderSankey(){
+  const W=960,H=200,pad=10;
+  const sx0=24,sx1=196,tx0=624,tx1=936,xc=(sx1+tx0)/2;
+  const sy0=pad,sy1=H-pad,sh=sy1-sy0;
+  const b=OVERVIEW.branches;
+  const split=+(sy0+sh*b[0].pct/100).toFixed(1);
+  const nh=64, c1=60, c2=150;
+  const ma={ts:sy0,bs:split,te:c1-nh/2,be:c1+nh/2,color:b[0].color,rib:b[0].rib,label:b[0].label,pct:b[0].pct};
+  const as={ts:split,bs:sy1,te:c2-nh/2,be:c2+nh/2,color:b[1].color,rib:b[1].rib,label:b[1].label,pct:b[1].pct};
+  const ribbon=o=>`M${sx1},${o.ts} C${xc},${o.ts} ${xc},${o.te} ${tx0},${o.te} L${tx0},${o.be} C${xc},${o.be} ${xc},${o.bs} ${sx1},${o.bs} Z`;
+  const flowLabel=o=>{
+    const my=((o.ts+o.bs)/2+(o.te+o.be)/2)/2;
+    const bw=132,bh=32,bx=xc-bw/2,by=my-bh/2;
+    return `<g>
+      <rect x="${bx}" y="${by.toFixed(1)}" width="${bw}" height="${bh}" rx="16" fill="#FFFFFF" stroke="${o.color}"></rect>
+      <text x="${xc}" y="${(my-2).toFixed(1)}" text-anchor="middle" fill="#182230" font-size="13" font-weight="600">${o.label} 单</text>
+      <text x="${xc}" y="${(my+12).toFixed(1)}" text-anchor="middle" fill="#667085" font-size="11" font-weight="500">占比 ${o.pct}%</text>
+    </g>`;
+  };
+  const svg=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="工单分流" style="font-family:inherit">
+    <path d="${ribbon(ma)}" fill="${b[0].rib}"></path>
+    <path d="${ribbon(as)}" fill="${b[1].rib}"></path>
+    <rect x="${sx0}" y="${sy0}" width="${sx1-sx0}" height="${sh}" rx="12" fill="#FFFFFF" stroke="#E4E7EC"></rect>
+    <text x="${(sx0+sx1)/2}" y="90" text-anchor="middle" fill="#667085" font-size="12" font-weight="500">工单总量</text>
+    <text x="${(sx0+sx1)/2}" y="118" text-anchor="middle" fill="#182230" font-size="22" font-weight="600">${OVERVIEW.totalLabel}</text>
+    ${flowLabel(ma)}
+    ${flowLabel(as)}
+    <g class="arch-node" data-arch="${b[0].key}">
+      <rect x="${tx0}" y="${ma.te}" width="${tx1-tx0}" height="${nh}" rx="12" fill="${archFilter===b[0].key?'#FFFFFF':(b[0].cls==='ma'?'#EEF0FA':'#E6F7F3')}" stroke="${b[0].color}" stroke-width="${archFilter===b[0].key?2.5:1}"></rect>
+      <text x="${(tx0+tx1)/2}" y="${c1-6}" text-anchor="middle" fill="#182230" font-size="14" font-weight="600">${b[0].name}</text>
+      <text x="${(tx0+tx1)/2}" y="${c1+16}" text-anchor="middle" fill="#475467" font-size="13" font-weight="500">${b[0].label} · ${b[0].pct}%</text>
+    </g>
+    <g class="arch-node" data-arch="${b[1].key}">
+      <rect x="${tx0}" y="${as.te}" width="${tx1-tx0}" height="${nh}" rx="12" fill="${archFilter===b[1].key?'#FFFFFF':'#E6F7F3'}" stroke="${b[1].color}" stroke-width="${archFilter===b[1].key?2.5:1}"></rect>
+      <text x="${(tx0+tx1)/2}" y="${c2-6}" text-anchor="middle" fill="#182230" font-size="14" font-weight="600">${b[1].name}</text>
+      <text x="${(tx0+tx1)/2}" y="${c2+16}" text-anchor="middle" fill="#475467" font-size="13" font-weight="500">${b[1].label} · ${b[1].pct}%</text>
+    </g>
+  </svg>`;
+  document.getElementById("sankey").innerHTML=svg;
+  document.querySelectorAll("#sankey .arch-node").forEach(g=>{
+    g.addEventListener("click",()=>{
+      const k=g.dataset.arch;
+      archFilter=(archFilter===k)?null:k;
+      renderSankey();renderDetail();
+    });
+  });
+  document.getElementById("splitLegend").innerHTML=OVERVIEW.branches.map(x=>`
+    <div class="legend-item"><span class="sq" style="background:${x.color}"></span>
+      <span><b>${x.name}</b> ${x.label}<span class="lp"> · 占比 ${x.pct}% · ${x.desc}</span></span></div>`).join("");
+}
+
+function renderCumulative(units){
+  return `<div class="units">${units.map(u=>`
+    <div class="unit" style="border-top-color:${u.color}">
+      <div class="uh"><span class="ud" style="background:${u.color}"></span>${u.name}</div>
+      <div class="ub">${u.metrics.map(m=>`
+        <div class="metric"><div class="ml">${m.l}</div><div class="mv">${m.v}</div>
+        <div class="md ${m.t}">环比 ${icon(m.t)} ${m.d}</div></div>`).join("")}</div>
+    </div>`).join("")}</div>`;
+}
+function renderFunnel(dist){
+  const max=Math.max(...dist.map(d=>d.value));
+  return `<div class="funnel">${dist.map((d,i)=>`
+    ${i>0?'<div class="farrow">↓ 流入下一环</div>':''}
+    <div class="frow"><div class="fn">${d.name}</div>
+      <div class="ft"><div class="ff" style="width:${Math.max(14,d.value/max*100)}%;background:${d.color}">${d.label}</div></div>
+      <div class="fv">${d.label}<small>当前停留</small></div></div>`).join("")}</div>`;
+}
+function renderDistribution(dist){
+  const max=Math.max(...dist.map(d=>d.value));
+  return `<div class="dist">${dist.map(d=>`
+    <div class="disrow"><div class="dn">${d.name}</div>
+      <div class="dt"><div class="df" style="width:${d.value/max*100}%;background:${d.color}"></div></div>
+      <div class="dv">${d.label}${d.pct?`<small>${d.pct}</small>`:""}</div></div>`).join("")}</div>`;
+}
+function renderTable(tbl){
+  return `<div class="tbl-wrap"><table class="tbl">
+    <thead><tr>${tbl.columns.map((c,i)=>`<th class="${i===0?'sticky':''}">${c}</th>`).join("")}</tr></thead>
+    <tbody>${tbl.rows.map(r=>`<tr>${r.map((cell,i)=>{
+      if(i===0) return `<th class="sticky rowhead">${cell}</th>`;
+      if(cell.tag) return `<td><span class="tag">${cell.v}</span></td>`;
+      if(cell.plain) return `<td><span class="cv">${cell.v}</span></td>`;
+      return `<td><div class="cv">${cell.v}</div><div class="cd ${cell.t}">${icon(cell.t)} ${cell.d}</div></td>`;
+    }).join("")}</tr>`).join("")}</tbody></table></div>`;
+}
+
+function renderDim(key,dim){
+  const cfg=DATA[key];
+  if(dim==="cumulative") return renderCumulative(cfg.cumulativeUnits);
+  if(dim==="flow") return key==="multiagent"?renderFunnel(cfg.dist):renderDistribution(cfg.dist);
+  if(dim==="label") return renderTable(cfg.tables.label);
+  if(dim==="unit") return renderTable(cfg.tables.agent);
+  return "";
+}
+
+/* 维度级说明：一条讲清「这个维度两架构怎么兼容」 */
+const DIM_NOTES={
+  cumulative:"<b>累计数</b>：执行/介入/异常的次数与率与架构无关，两侧同口径，可直接横向对比；卡片按执行单元（阶段 / 技能）罗列，数量自适应。",
+  flow:"<b>停留 · 分布</b>：多智能体是<b>有序漏斗</b>（上一环流入下一环，定位堵点）；Agent+Skill 无流水线顺序，漏斗失去语义 → 换成<b>技能调用分布</b>，看量级与占比。",
+  label:"<b>工单标签分析</b>：多智能体保留 首次规划量/研判量/执行量/沟通量 等阶段列；Agent+Skill 无阶段 → 收敛为 调用总量+涉及技能数+Top技能，通用列（介入率/解决率/满意度/时长）一致。",
+  unit:"<b>执行单元分析</b>：执行主体从 阶段 Subagent 换成 Skill，行数随任务动态；处理量/成功率/介入率/异常率/耗时/Token 同口径，可横向对比。",
+};
+
+function renderDetail(){
+  const single=!!archFilter;
+  const col=b=>{
+    const cfg=DATA[b.key];
+    return `<div class="col ${b.cls}${single?' full':''}">
+      <div class="col-head">
+        <span class="an"><span class="sq" style="background:${b.color}"></span>${b.name}</span>
+        <span class="badge ${b.cls}">流入 ${b.label} · ${b.pct}%</span>
+      </div>
+      <div class="col-sub">${cfg.subtitles[activeDim]}</div>
+      <div class="col-body">${renderDim(b.key,activeDim)}</div>
+    </div>`;
+  };
+  const shown = single
+    ? OVERVIEW.branches.filter(b=>b.key===archFilter)
+    : OVERVIEW.branches;
+  const fb = single ? OVERVIEW.branches.find(b=>b.key===archFilter) : null;
+  const hint = single
+    ? `已聚焦单一架构，独占全宽查看更完整；点顶部节点或右侧「查看全部」可返回对比。`
+    : `选择一个维度，左右并排对比两种执行架构的同口径数据；点上方桑基节点可只看单一架构。`;
+  const filterTip = single ? `
+    <div class="filter-tip">
+      <span>当前筛选</span>
+      <span class="ftag"><span class="sq" style="background:${fb.color}"></span>${fb.name} · 流入 ${fb.label} · ${fb.pct}%</span>
+      <button class="reset-arch" id="resetArch">查看全部 ↺</button>
+    </div>` : "";
+  document.getElementById("detail").innerHTML=`
+    <div class="card">
+      <h2><span class="dot"></span>按架构下钻</h2>
+      <div class="hint">${hint}</div>
+      <div class="tabs">${DIMS.map(d=>`<button data-dim="${d.id}" class="${d.id===activeDim?'on':''}">${d.label}</button>`).join("")}</div>
+      <div class="dim-note">💡 ${DIM_NOTES[activeDim]}</div>
+      ${filterTip}
+      <div class="cols${single?' single':''}">${shown.map(col).join("")}</div>
+    </div>`;
+  document.querySelectorAll("#detail .tabs button").forEach(btn=>{
+    btn.addEventListener("click",()=>{activeDim=btn.dataset.dim;renderDetail();});
+  });
+  const rb=document.getElementById("resetArch");
+  if(rb) rb.addEventListener("click",()=>{archFilter=null;renderSankey();renderDetail();});
+}
+
+renderSankey();
+renderDetail();
+</script>
+</body>
+</html>
